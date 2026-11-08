@@ -1,0 +1,89 @@
+name: Prepare Windows prerelease
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag on main (for example v0.3.0)
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-prerelease-${{ inputs.tag }}
+
+jobs:
+  package:
+    runs-on: windows-2025
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
+    steps:
+      - name: Validate dispatch
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -cne 'refs/heads/main' -or $env:RELEASE_TAG -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+              throw 'Run from main and supply a tag such as v0.3.0.'
+          }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate tag and install Rust
+        shell: pwsh
+        run: |
+          git merge-base --is-ancestor HEAD refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'The tagged commit must be part of main.' }
+          rustup toolchain install 1.85.1 --profile minimal --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $metadata = cargo +1.85.1 metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = ($metadata.packages | Where-Object name -CEQ 'ps5-pack-analyzer').version
+          if ($env:RELEASE_TAG -cne "v$version") { throw "The tag must match Cargo.toml (v$version)." }
+      - name: Test and build Windows x64
+        shell: pwsh
+        run: |
+          cargo +1.85.1 test --release --locked --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.85.1 build --release --locked --target x86_64-pc-windows-msvc
+      - name: Package and verify ZIP
+        shell: pwsh
+        run: |
+          $zip = ./scripts/package-windows.ps1 -Tag $env:RELEASE_TAG -Executable 'target/x86_64-pc-windows-msvc/release/ps5-pack-analyzer.exe' -OutputDirectory dist
+          $entries = [IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+              $expected = @('Abrir-gerador.cmd', 'LEIA-ME.txt', 'LICENSE', 'ps5-pack-analyzer.exe')
+              if (Compare-Object $expected @($entries.Entries.FullName) -CaseSensitive) {
+                  throw 'Unexpected ZIP contents.'
+              }
+          } finally {
+              $entries.Dispose()
+          }
+          $expectedChecksum = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + (Split-Path -Leaf $zip)
+          if ((Get-Content -Raw -LiteralPath "$zip.sha256").TrimEnd() -cne $expectedChecksum) {
+              throw 'ZIP checksum mismatch.'
+          }
+          Expand-Archive -LiteralPath $zip -DestinationPath 'dist/smoke-test'
+          $version = & 'dist/smoke-test/ps5-pack-analyzer.exe' --version
+          if ($LASTEXITCODE -ne 0 -or $version -cne "ps5-pack-analyzer $($env:RELEASE_TAG.Substring(1))") {
+              throw 'The executable extracted from the ZIP failed its version check.'
+          }
+      - name: Create draft prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = "dist/ps5-zstd-toml-generator-${env:RELEASE_TAG}-windows-x64.zip"
+          $notes = @'
+          Baixe e extraia o ZIP inteiro. Abra `Abrir-gerador.cmd` com dois cliques e informe o caminho do dump extraído. O executável portátil funciona sem Rust ou Git.
+
+          O perfil principal mantém todos os arquivos soltos. Os candidatos à compressão precisam de validação no PS5.
+
+          O executável não tem assinatura de código. O Windows pode exibir um aviso de reputação. Compare o SHA-256 do ZIP com o arquivo `.sha256` desta pré-release.
+          '@
+          $notesFile = Join-Path $env:RUNNER_TEMP 'ps5-release-notes.md'
+          Set-Content -LiteralPath $notesFile -Value $notes -Encoding utf8
+          gh release create $env:RELEASE_TAG $zip "$zip.sha256" --repo $env:GITHUB_REPOSITORY --verify-tag --draft --prerelease --title "PS5 Zstd TOML Generator $env:RELEASE_TAG" --notes-file $notesFile
