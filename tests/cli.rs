@@ -83,14 +83,28 @@ fn guided_mode_accepts_quoted_paths_and_checks_destinations() {
     assert!(summary.contains("Pasta do dump inválida"));
     assert!(summary.contains("output must be outside the dump"));
     assert!(summary.contains("0 candidatos"));
-    assert!(summary.contains(&first.join("profile.toml").to_string_lossy().into_owned()));
-    assert!(summary.contains(
-        &first
-            .join("candidates")
-            .join("profile.toml")
-            .to_string_lossy()
-            .into_owned()
-    ));
+    for (label, expected) in [
+        (
+            "Perfil conservador (todos os arquivos soltos): ",
+            first.join("profile.toml"),
+        ),
+        (
+            "Perfil experimental (0 candidatos): ",
+            first.join("candidates/profile.toml"),
+        ),
+    ] {
+        let shown = Path::new(
+            summary
+                .lines()
+                .find_map(|line| line.strip_prefix(label))
+                .expect("the summary should show the profile path"),
+        );
+        assert!(shown.is_absolute(), "{shown:?} should be an absolute path");
+        assert_eq!(
+            shown.canonicalize().unwrap(),
+            expected.canonicalize().unwrap()
+        );
+    }
     assert!(!dump.join("inside").exists());
     assert!(fs::read_to_string(first.join("selected.txt"))
         .unwrap()
