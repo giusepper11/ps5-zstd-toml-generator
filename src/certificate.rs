@@ -192,6 +192,7 @@ pub struct EvidenceRange {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Certificate {
+    analyzer: &'static str,
     inventory: [u8; 32],
     selection: [u8; 32],
     profile: [u8; 32],
@@ -227,6 +228,7 @@ pub fn create(
         }
     }
     Ok(Certificate {
+        analyzer: env!("CARGO_PKG_VERSION"),
         inventory: inventory(files)?,
         selection: selection(selected),
         profile: profile(p),
@@ -236,7 +238,7 @@ pub fn create(
 impl Certificate {
     /// Deterministic text encoding. Versions are bound in the header.
     pub fn serialize(&self) -> String {
-        let mut s=format!("ps5-pack-certificate-v1\nanalyzer={}\npolicy=offline-conservative-v1\nforge=0.5.4\nruntime=0.3.2\ncoverage=evidence-ranges-only\ninventory={}\nselection={}\nprofile={}\n",env!("CARGO_PKG_VERSION"),hex(&self.inventory),hex(&self.selection),hex(&self.profile));
+        let mut s=format!("ps5-pack-certificate-v1\nanalyzer={}\npolicy=offline-conservative-v1\nforge=0.5.4\nruntime=0.3.2\ncoverage=evidence-ranges-only\ninventory={}\nselection={}\nprofile={}\n",self.analyzer,hex(&self.inventory),hex(&self.selection),hex(&self.profile));
         for r in &self.ranges {
             s.push_str(&format!(
                 "range={} {} {} {}\n",
@@ -253,9 +255,15 @@ impl Certificate {
             return Err(invalid("certificate exceeds 128 MiB"));
         }
         let mut l = s.lines();
+        if l.next() != Some("ps5-pack-certificate-v1") {
+            return Err(invalid("unsupported certificate"));
+        }
+        let analyzer = match l.next() {
+            Some("analyzer=0.3.0") => "0.3.0",
+            Some(concat!("analyzer=", env!("CARGO_PKG_VERSION"))) => env!("CARGO_PKG_VERSION"),
+            _ => return Err(invalid("unsupported analyzer version")),
+        };
         for expect in [
-            "ps5-pack-certificate-v1",
-            concat!("analyzer=", env!("CARGO_PKG_VERSION")),
             "policy=offline-conservative-v1",
             "forge=0.5.4",
             "runtime=0.3.2",
@@ -330,6 +338,7 @@ impl Certificate {
             return Err(invalid("bad range order"));
         }
         Ok(Self {
+            analyzer,
             inventory,
             selection,
             profile,
