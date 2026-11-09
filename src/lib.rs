@@ -810,9 +810,7 @@ impl Analysis {
             out.push_str("Kernel AIO has unresolved destinations. It cannot read packed virtual descriptors.\n");
         }
         if self.selected.is_empty() {
-            out.push_str(
-                "No files selected. The TOML describes an all-loose result, not a useful pack.\n",
-            );
+            out.push_str("No files selected for compression.\n");
         }
         out.push_str("Catalogue membership does not establish which API consumes a file. Static analysis does not exercise gameplay.\n");
         out.push_str("Dynamic resolution, mapping, callbacks and unexamined modules can hide additional consumers. No absence-of-I/O claim is made.\n");

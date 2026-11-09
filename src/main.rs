@@ -8,13 +8,13 @@ use ps5_pack_analyzer::{
     analyze_with_progress,
     audit::AuditedSource,
     certificate::{self, Certificate},
-    forge, FolderSource, Options, Profile, Progress,
+    FolderSource, Options, Profile, Progress,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 mod interactive;
 
-const USAGE: &str = "ps5-pack-analyzer <dump-folder> <new-output-folder> [--full | --strict | --manifest-candidates] [--headers] [--exploratory] [--full-hash]\n\
+const USAGE: &str = "ps5-pack-analyzer <dump-folder> <new-output-folder> [--full | --strict | --manifest-candidates] [--headers] [--full-hash]\n\
   ps5-pack-analyzer --verify <dump-folder> <analysis-folder>\n\
   ps5-pack-analyzer --trace <trace.tsv> <certificate.txt>\n\
   ps5-pack-analyzer --interactive\n\
@@ -23,9 +23,8 @@ const USAGE: &str = "ps5-pack-analyzer <dump-folder> <new-output-folder> [--full
   --strict               Inspect resolver arguments; unresolved reads remain loose\n\
   --manifest-candidates  Use the catalogue-only experimental policy from v0.1\n\
   --headers              Also scan all headers in either diagnostic mode\n\
-  --exploratory          Opt in to unvalidated hypotheses in profile.toml\n\
-  --full-hash            Read every input byte in bounded chunks (no asset copies)\n\
-  Always writes a separate candidates/ profile; neither profile proves gameplay.";
+  --full-hash            Cover every input byte in the profile certificate\n\
+  Writes one experimental profile when there are compression candidates. Validate it on a PS5.";
 
 fn main() -> ExitCode {
     match run() {
@@ -86,11 +85,10 @@ fn run() -> io::Result<()> {
     let output = PathBuf::from(args.next().ok_or_else(|| argument(USAGE))?);
     let mut mode = None;
     let mut scan_headers = false;
-    let mut exploratory = false;
     let mut full_hash = false;
     for arg in args {
         if arg == "--exploratory" {
-            exploratory = true;
+            // Older invocations used this flag to put candidates in the main profile.
             continue;
         }
         if arg == "--full-hash" {
@@ -119,7 +117,6 @@ fn run() -> io::Result<()> {
     }
     let mut options = mode.unwrap_or_else(Options::full);
     options.scan_headers = scan_headers;
-    options.exploratory = exploratory;
     analyze_dump(&PathBuf::from(input), &output, options, full_hash, false)
 }
 
@@ -156,13 +153,14 @@ fn path_exists(path: &Path) -> io::Result<bool> {
 fn analyze_dump(
     input: &Path,
     output: &Path,
-    options: Options,
+    mut options: Options,
     full_hash: bool,
     guided: bool,
 ) -> io::Result<()> {
     let output = check_output(&input.canonicalize()?, output)?;
     let mut source = AuditedSource::new(FolderSource::open(input)?);
     let mut next_update = 0;
+    options.exploratory = true;
     let result = analyze_with_progress(&mut source, options, |progress| match progress {
         Progress::Headers { checked, total } if checked >= next_update || checked == total => {
             eprintln!("Headers: {checked}/{total}");
@@ -172,6 +170,8 @@ fn analyze_dump(
         Progress::CompressionSamples => eprintln!("Measuring Zstd savings on eligible families"),
         _ => {}
     })?;
+    let selected = result.selected_paths();
+    let full_hash = full_hash && !selected.is_empty();
     if full_hash {
         source.hash_all(|done, total| {
             if done % 16384 == 0 || done == total {
@@ -179,59 +179,49 @@ fn analyze_dump(
             }
         })?;
     }
-    let profile = result.profile()?;
-    let candidates = result.candidate_profile()?;
-    let selected = result.selected_paths();
-    let candidate_paths = result.candidate_paths();
-    forge::verify_generated(&profile, result.inventory(), &selected)?;
-    forge::verify_generated(&candidates, result.inventory(), &candidate_paths)?;
-    let ranges = source.ranges()?;
-    let certificate = certificate::create(result.inventory(), &selected, &profile, &ranges)?;
-    eprintln!("Reopening inventory and verifying recorded evidence before publishing artifacts");
-    certificate.verify(&mut FolderSource::open(input)?, &selected, &profile)?;
-    let cert = certificate.serialize();
-    let candidate_cert =
-        certificate::create(result.inventory(), &candidate_paths, &candidates, &ranges)?
-            .serialize();
     let decisions = result.decisions_tsv();
-    let report = format!("{}\nEvidence bytes read: {}. Full byte coverage requested: {}.\nCertificate binds all recorded ranges; it is not a console compatibility certificate.\n", result.report(), source.bytes_read, full_hash);
-    let selection_size =
-        |paths: &BTreeSet<String>| paths.iter().map(|p| p.len() + 1).sum::<usize>();
-    let selected_bytes = selection_size(&selected);
-    let candidate_bytes = selection_size(&candidate_paths);
-    if selected_bytes.max(candidate_bytes) > MAX_SELECTION_BYTES {
+    let mut report = format!(
+        "{}\nEvidence bytes read: {}.\n",
+        result.report(),
+        source.bytes_read
+    );
+    let selection_bytes: usize = selected.iter().map(|path| path.len() + 1).sum();
+    if selection_bytes > MAX_SELECTION_BYTES {
         return Err(argument("selection exceeds 32 MiB verification limit"));
     }
-    let bytes = cert.len()
-        + candidate_cert.len()
-        + decisions.len()
-        + profile.toml.len()
-        + candidates.toml.len()
-        + profile
-            .lists
-            .values()
-            .chain(candidates.lists.values())
-            .map(String::len)
-            .sum::<usize>()
-        + selected_bytes
-        + candidate_bytes
-        + report.len();
+    let artifacts = if selected.is_empty() {
+        None
+    } else {
+        let profile = result.profile()?;
+        let ranges = source.ranges()?;
+        let certificate = certificate::create(result.inventory(), &selected, &profile, &ranges)?;
+        eprintln!(
+            "Reopening inventory and verifying recorded evidence before publishing artifacts"
+        );
+        certificate.verify(&mut FolderSource::open(input)?, &selected, &profile)?;
+        report.push_str(&format!(
+            "Full byte coverage recorded: {full_hash}.\nThe certificate checks the recorded ranges. Validate the profile on a PS5.\n"
+        ));
+        Some((profile, certificate.serialize()))
+    };
+    let profile_bytes = artifacts.as_ref().map_or(0, |(profile, cert)| {
+        profile.toml.len() + cert.len() + profile.lists.values().map(String::len).sum::<usize>()
+    });
+    let bytes = decisions.len() + report.len() + selection_bytes + profile_bytes;
     if bytes > MAX_ARTIFACT_BYTES {
         return Err(argument("analysis artifacts exceed 256 MiB disk budget"));
     }
     check_free_space(output.parent().unwrap(), bytes as u64)?;
     fs::create_dir(&output)?;
-    let candidate_dir = output.join("candidates");
-    fs::create_dir(&candidate_dir)?;
-    save_profile(&output, &profile, &selected)?;
-    save_profile(&candidate_dir, &candidates, &candidate_paths)?;
     write_new(&output.join("report.txt"), &report)?;
     write_new(&output.join("decisions.tsv"), &decisions)?;
-    // Write the main certificate only after the full output has been written.
-    save_certificate(&candidate_dir, &candidate_cert)?;
-    save_certificate(&output, &cert)?;
+    if let Some((profile, cert)) = artifacts {
+        save_profile(&output, &profile, &selected)?;
+        // Write the certificate only after the full output has been written.
+        save_certificate(&output, &cert)?;
+    }
     if guided {
-        interactive::print_summary(&output, candidate_paths.len());
+        interactive::print_summary(&output, selected.len());
     } else {
         println!(
             "{} files selected out of {} ({} raw bytes). Output {}",
@@ -240,6 +230,13 @@ fn analyze_dump(
             result.selected_bytes,
             output.display()
         );
+        if selected.is_empty() {
+            println!("No compression candidates were found. See report.txt for the analysis.");
+        } else {
+            println!(
+                "Use profile.toml to test compression in Forge and validate the result on a PS5."
+            );
+        }
     }
     Ok(())
 }
@@ -320,7 +317,16 @@ fn read_bounded(path: &Path, limit: usize) -> io::Result<String> {
 }
 
 fn load_artifact(dir: &Path) -> io::Result<(Profile, BTreeSet<String>, Certificate)> {
-    let toml = read_bounded(&dir.join("profile.toml"), 1024 * 1024)?;
+    let toml = read_bounded(&dir.join("profile.toml"), 1024 * 1024).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            io::Error::new(
+                error.kind(),
+                format!("no profile.toml found in {}", dir.display()),
+            )
+        } else {
+            error
+        }
+    })?;
     let mut lists = BTreeMap::new();
     let mut total = 0;
     for entry in fs::read_dir(dir)? {

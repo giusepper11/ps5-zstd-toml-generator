@@ -80,7 +80,7 @@ jobs:
           $notes = @'
           Download and extract the entire ZIP. Double-click `Start-Generator.cmd` and enter the path to your extracted dump. The portable executable runs without Rust or Git.
 
-          The main profile keeps all files loose. Validate any compression candidates on a PS5.
+          If the analysis finds compression candidates, open the generated profile.toml in PS5 Dump Forge and validate the resulting pack on a PS5. If there are no candidates, see report.txt for the analysis.
 
           Windows may display a reputation warning because the executable is unsigned. Compare the ZIP's SHA-256 with the `.sha256` file from this prerelease.
           '@

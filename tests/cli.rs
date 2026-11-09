@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod common;
+use common::synthetic_elf;
+
 struct Fixture(PathBuf);
 
 impl Fixture {
@@ -82,41 +85,28 @@ fn guided_mode_accepts_quoted_paths_and_checks_destinations() {
     let summary = String::from_utf8(output.stdout).unwrap();
     assert!(summary.contains("Invalid dump folder"));
     assert!(summary.contains("output must be outside the dump"));
-    assert!(summary.contains("0 candidates"));
-    for (label, expected) in [
-        (
-            "Conservative profile (all files loose): ",
-            first.join("profile.toml"),
-        ),
-        (
-            "Experimental profile (0 candidates): ",
-            first.join("candidates/profile.toml"),
-        ),
-    ] {
-        let shown = Path::new(
-            summary
-                .lines()
-                .find_map(|line| line.strip_prefix(label))
-                .expect("the summary should show the profile path"),
-        );
-        assert!(shown.is_absolute(), "{shown:?} should be an absolute path");
-        assert_eq!(
-            shown.canonicalize().unwrap(),
-            expected.canonicalize().unwrap()
-        );
-    }
+    assert!(summary.contains("No compression candidates were found"));
+    let shown = Path::new(
+        summary
+            .lines()
+            .find_map(|line| line.strip_prefix("Analysis report: "))
+            .expect("the summary should show the report path"),
+    );
+    assert!(shown.is_absolute(), "{shown:?} should be an absolute path");
+    assert_eq!(
+        shown.canonicalize().unwrap(),
+        first.join("report.txt").canonicalize().unwrap()
+    );
     assert!(!dump.join("inside").exists());
-    assert!(fs::read_to_string(first.join("selected.txt"))
-        .unwrap()
-        .is_empty());
-    successful(&run(&[Path::new("--verify"), &dump, &first]));
+    assert!(first.join("decisions.tsv").is_file());
+    assert_eq!(fs::read_dir(&first).unwrap().count(), 2);
 
     let occupied = fixture.0.join("occupied");
     fs::create_dir(&occupied).unwrap();
     let output = guided(&format!("{}\n{}\n\n", dump.display(), occupied.display()));
     successful(&output);
     assert!(String::from_utf8_lossy(&output.stdout).contains("output directory already exists"));
-    assert!(fixture.0.join("Café Demo-toml-2/profile.toml").is_file());
+    assert!(fixture.0.join("Café Demo-toml-2/report.txt").is_file());
     assert_eq!(fs::read_dir(&occupied).unwrap().count(), 0);
 }
 
@@ -138,30 +128,28 @@ fn full_hash_cli_binds_dump_and_protects_output_locations() {
     fs::create_dir(&dump).unwrap();
     fs::create_dir(dump.join("sce_sys")).unwrap();
     fs::create_dir(dump.join("data")).unwrap();
-    fs::write(dump.join("eboot.bin"), b"not a readable executable").unwrap();
+    fs::write(dump.join("eboot.bin"), synthetic_elf(false)).unwrap();
     fs::write(
         dump.join("sce_sys/param.json"),
         b"{\"titleId\":\"PPSA00000\"}",
     )
     .unwrap();
-    let asset = dump.join("data/asset.bin");
-    fs::write(&asset, vec![0x42; 256]).unwrap();
+    fs::write(dump.join("data/a[0].odxb"), vec![0; 16_384]).unwrap();
+    let unselected = dump.join("data/unselected.bin");
+    fs::write(&unselected, vec![0x42; 256]).unwrap();
 
-    successful(&run(&[&dump, &output, Path::new("--full-hash")]));
-    assert!(fs::read_to_string(output.join("selected.txt"))
-        .unwrap()
-        .is_empty());
-    assert!(fs::read_to_string(output.join("profile.toml"))
-        .unwrap()
-        .contains("default_action = \"loose\""));
-    assert!(output.join("candidates/profile.toml").is_file());
-    assert!(output.join("candidates/certificate.txt").is_file());
+    let generated = run(&[&dump, &output, Path::new("--full-hash")]);
+    successful(&generated);
+    assert!(String::from_utf8_lossy(&generated.stdout).contains("validate the result on a PS5"));
+    assert_eq!(
+        fs::read_to_string(output.join("selected.txt")).unwrap(),
+        "data/a[0].odxb\n"
+    );
+    let profile = fs::read_to_string(output.join("profile.toml")).unwrap();
+    assert!(profile.contains("action = \"compress\""));
+    assert!(profile.contains("data/a[[]0].odxb"));
+    assert!(!output.join("candidates").exists());
     successful(&run(&[Path::new("--verify"), &dump, &output]));
-    successful(&run(&[
-        Path::new("--verify"),
-        &dump,
-        &output.join("candidates"),
-    ]));
 
     assert!(!run(&[&dump, &output]).status.success());
     let inside = dump.join("forbidden-output");
@@ -170,9 +158,9 @@ fn full_hash_cli_binds_dump_and_protects_output_locations() {
 
     // Alter a byte beyond the header, leaving the file size unchanged. The
     // full-hash certificate must reject it, independently of timestamp checks.
-    let mut changed = fs::read(&asset).unwrap();
+    let mut changed = fs::read(&unselected).unwrap();
     changed[100] ^= 1;
-    fs::write(&asset, changed).unwrap();
+    fs::write(&unselected, changed).unwrap();
     assert!(!run(&[Path::new("--verify"), &dump, &output])
         .status
         .success());

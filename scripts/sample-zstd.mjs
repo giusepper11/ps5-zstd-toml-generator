@@ -204,7 +204,10 @@ function main(args) {
   const outputReal = path.join(parent, path.basename(output));
   if (within(root, outputReal)) throw Error('output must be outside dump');
 
-  const selection = readSelection(path.join(analysis, 'candidates', 'selected.txt'));
+  const legacySelection = path.join(analysis, 'candidates', 'selected.txt');
+  const selection = readSelection(fs.existsSync(legacySelection)
+    ? legacySelection
+    : path.join(analysis, 'selected.txt'));
   const selectedText = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(selection);
   const measurements = measure(groupCandidates(root, selectedText));
   const result = {
