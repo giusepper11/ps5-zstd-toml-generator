@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use ps5_pack_analyzer::{
-    analyze_with_progress,
+    analyze_with_frostbite_choice,
     audit::AuditedSource,
     certificate::{self, Certificate},
     FolderSource, Options, Profile, Progress,
@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod interactive;
 
-const USAGE: &str = "ps5-pack-analyzer <dump-folder> <new-output-folder> [--full | --strict | --manifest-candidates] [--headers] [--full-hash]\n\
+const USAGE: &str = "ps5-pack-analyzer <dump-folder> <new-output-folder> [--full | --strict | --manifest-candidates] [--headers] [--full-hash] [--frostbite-cas-candidates]\n\
   ps5-pack-analyzer --verify <dump-folder> <analysis-folder>\n\
   ps5-pack-analyzer --trace <trace.tsv> <certificate.txt>\n\
   ps5-pack-analyzer --interactive\n\
@@ -24,6 +24,7 @@ const USAGE: &str = "ps5-pack-analyzer <dump-folder> <new-output-folder> [--full
   --manifest-candidates  Use the catalogue-only experimental policy from v0.1\n\
   --headers              Also scan all headers in either diagnostic mode\n\
   --full-hash            Cover every input byte in the profile certificate\n\
+  --frostbite-cas-candidates  Add sampled Frostbite CAS archives for console testing (full mode)\n\
   Writes one experimental profile when there are compression candidates. Validate it on a PS5.";
 
 fn main() -> ExitCode {
@@ -86,6 +87,7 @@ fn run() -> io::Result<()> {
     let mut mode = None;
     let mut scan_headers = false;
     let mut full_hash = false;
+    let mut frostbite_cas_candidates = false;
     for arg in args {
         if arg == "--exploratory" {
             // Older invocations used this flag to put candidates in the main profile.
@@ -97,6 +99,10 @@ fn run() -> io::Result<()> {
         }
         if arg == "--headers" {
             scan_headers = true;
+            continue;
+        }
+        if arg == "--frostbite-cas-candidates" {
+            frostbite_cas_candidates = true;
             continue;
         }
         let options = if arg == "--full" {
@@ -117,6 +123,7 @@ fn run() -> io::Result<()> {
     }
     let mut options = mode.unwrap_or_else(Options::full);
     options.scan_headers = scan_headers;
+    options.frostbite_cas_candidates = frostbite_cas_candidates;
     analyze_dump(&PathBuf::from(input), &output, options, full_hash, false)
 }
 
@@ -161,15 +168,26 @@ fn analyze_dump(
     let mut source = AuditedSource::new(FolderSource::open(input)?);
     let mut next_update = 0;
     options.exploratory = true;
-    let result = analyze_with_progress(&mut source, options, |progress| match progress {
-        Progress::Headers { checked, total } if checked >= next_update || checked == total => {
-            eprintln!("Headers: {checked}/{total}");
-            next_update = checked + 16_384;
-        }
-        Progress::CodeAndCatalogues => eprintln!("Analyzing executable I/O and catalogues"),
-        Progress::CompressionSamples => eprintln!("Measuring Zstd savings on eligible families"),
-        _ => {}
-    })?;
+    let result = analyze_with_frostbite_choice(
+        &mut source,
+        options,
+        |progress| match progress {
+            Progress::Headers { checked, total } if checked >= next_update || checked == total => {
+                eprintln!("Headers: {checked}/{total}");
+                next_update = checked + 16_384;
+            }
+            Progress::CodeAndCatalogues => eprintln!("Analyzing executable I/O and catalogues"),
+            Progress::CompressionSamples => eprintln!("Measuring Zstd savings"),
+            _ => {}
+        },
+        |count| {
+            if guided {
+                interactive::confirm_frostbite(count)
+            } else {
+                Ok(false)
+            }
+        },
+    )?;
     let selected = result.selected_paths();
     let full_hash = full_hash && !selected.is_empty();
     if full_hash {

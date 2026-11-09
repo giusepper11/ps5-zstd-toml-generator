@@ -41,6 +41,9 @@ pub struct Options {
     pub manifest_candidates: bool,
     /// Inspect every header and measure eligible payload families.
     pub full: bool,
+    /// Include individually sampled Frostbite CAS archives in test candidates.
+    /// Requires full mode and does not establish runtime read compatibility.
+    pub frostbite_cas_candidates: bool,
     /// Export heuristic candidates as the active profile. Never a compatibility
     /// claim; default false leaves unresolved access physical.
     pub exploratory: bool,
@@ -118,12 +121,26 @@ pub fn analyze(tree: &mut (impl SourceTree + ?Sized), options: Options) -> io::R
 pub fn analyze_with_progress(
     tree: &mut (impl SourceTree + ?Sized),
     options: Options,
+    progress: impl FnMut(Progress),
+) -> io::Result<Analysis> {
+    analyze_with_frostbite_choice(tree, options, progress, |_| Ok(false))
+}
+
+/// Ask whether to include eligible Frostbite CAS archives after sampling.
+/// An explicit export option skips the callback.
+pub fn analyze_with_frostbite_choice(
+    tree: &mut (impl SourceTree + ?Sized),
+    options: Options,
     mut progress: impl FnMut(Progress),
+    choose_frostbite_cas: impl FnOnce(usize) -> io::Result<bool>,
 ) -> io::Result<Analysis> {
     if options.full && options.manifest_candidates {
         return Err(invalid(
             "full scan and manifest-only policy are mutually exclusive",
         ));
+    }
+    if options.frostbite_cas_candidates && !options.full {
+        return Err(invalid("--frostbite-cas-candidates requires full mode"));
     }
     let mut files = tree.files().to_vec();
     files.sort_unstable_by(|a, b| a.path.cmp(&b.path));
@@ -197,6 +214,11 @@ pub fn analyze_with_progress(
             });
         }
     }
+    let frostbite = options.full
+        && files.iter().zip(&headers).any(|(entry, header)| {
+            entry.path.eq_ignore_ascii_case("data/layout.toc")
+                && assets::frostbite_layout(header, entry.size)
+        });
     progress(Progress::CodeAndCatalogues);
     for (index, f) in files.iter().enumerate() {
         let lower = f.path.to_ascii_lowercase();
@@ -236,7 +258,15 @@ pub fn analyze_with_progress(
                     }
                 }
             } else {
-                assets::classify(&f.path, f.size, head)
+                let kind = assets::classify(&f.path, f.size, head);
+                if kind == assets::AssetKind::Unknown
+                    && frostbite
+                    && assets::frostbite_cas_path(&lower)
+                {
+                    assets::AssetKind::FrostbiteCas
+                } else {
+                    kind
+                }
             };
             kinds.push(kind);
         }
@@ -371,7 +401,9 @@ pub fn analyze_with_progress(
                 apr_scopes: &apr_scopes,
                 keep: &keep,
                 blocked_scopes: &blocked_scopes,
+                frostbite_cas_candidates: options.frostbite_cas_candidates,
             },
+            choose_frostbite_cas,
         )?;
         selected = std::mem::take(&mut result.selected);
         selected_bytes = result.selected_bytes;
@@ -543,7 +575,10 @@ fn compact_patterns(files: &[Entry], selected: &BTreeMap<String, Evidence>) -> V
         let Some(extension) = pattern_extension(&file.path) else {
             continue;
         };
-        let included = usize::from(selected.contains_key(&file.path));
+        let included =
+            usize::from(selected.get(&file.path).is_some_and(|evidence| {
+                *evidence != Evidence::Measured(policy::Access::FrostbiteCas)
+            }));
         for (index, _) in file.path.match_indices('/') {
             let (total, packed) = groups.entry((&file.path[..index], extension)).or_default();
             *total += 1;
@@ -552,6 +587,10 @@ fn compact_patterns(files: &[Entry], selected: &BTreeMap<String, Evidence>) -> V
     }
     let mut patterns = BTreeSet::new();
     for path in selected.keys() {
+        if selected[path] == Evidence::Measured(policy::Access::FrostbiteCas) {
+            patterns.insert(literal_pattern(path));
+            continue;
+        }
         let group = pattern_extension(path).and_then(|extension| {
             path.match_indices('/').rev().find_map(|(index, _)| {
                 let directory = &path[..index];
@@ -666,6 +705,14 @@ impl Analysis {
             );
         } else {
             toml.push_str("# Conservative policy: unresolved consumers remain physical.\n");
+        }
+        if exploratory
+            && self
+                .candidates
+                .values()
+                .any(|evidence| *evidence == Evidence::Measured(policy::Access::FrostbiteCas))
+        {
+            toml.push_str("# Frostbite CAS candidates use sampled savings. Their runtime read paths are unverified.\n");
         }
         if self
             .facts

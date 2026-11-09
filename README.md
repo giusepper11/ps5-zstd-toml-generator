@@ -10,6 +10,8 @@ The CLI writes one experimental `profile.toml` when it finds compression candida
 2. Extract the entire ZIP and double-click `Start-Generator.cmd`. The portable version runs without Rust or Git.
 3. Paste the path to the extracted dump. Press Enter to accept the suggested output folder or enter a new one. The tool prints the profile path when it finds candidates, or the report path when it finds none.
 
+If the analysis finds Frostbite game archives worth testing, the wizard asks whether to include them in the profile. Enter Y to include them for a PS5 test, or press Enter to keep those archives loose.
+
 Open the generated `profile.toml` under **Pack → Custom rules (TOML)** in Forge to test compression. Keep any `paths-*.txt` files next to the profile and validate the result on a PS5.
 
 Windows may display a reputation warning because the prerelease is unsigned. Compare the ZIP's SHA-256 with the `.sha256` file from the same prerelease. You can also run the executable directly from PowerShell.
@@ -30,6 +32,12 @@ cargo run --release --locked -- ./example-dump ./analysis-output
 ```
 
 The default `--full` mode inventories the dump, inspects headers and readable executables, and measures compression savings for sample files from candidate families. `--strict` limits candidates to apparent APR resolver arguments. `--manifest-candidates` considers candidates identified in catalogs. `--headers` also scans file headers in either diagnostic mode. Run `--help` for all options.
+
+Full mode recognizes the Frostbite PS5 superbundle layout from its companion TOC and reports sampled savings for up to 256 CAS archives. To test those archives on a PS5, add `--frostbite-cas-candidates` to the full-mode command. The option adds only individually sampled archives that saved at least 8% in the sample, passed the protected-path checks, and came from a dump with APR calls and readable executable code. The profile lists the exact archive paths. Their runtime read paths are unverified, so check gameplay on the console before relying on the profile.
+
+```powershell
+.\ps5-pack-analyzer.exe 'D:\My Game' 'D:\My Game-cas-test' --full --frostbite-cas-candidates
+```
 
 | Output | Contents |
 | --- | --- |

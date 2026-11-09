@@ -85,7 +85,8 @@ fn guided_mode_accepts_quoted_paths_and_checks_destinations() {
     let summary = String::from_utf8(output.stdout).unwrap();
     assert!(summary.contains("Invalid dump folder"));
     assert!(summary.contains("output must be outside the dump"));
-    assert!(summary.contains("No compression candidates were found"));
+    assert!(summary.contains("No compression profile was generated"));
+    assert!(!summary.contains("Include these archives"));
     let shown = Path::new(
         summary
             .lines()
@@ -118,6 +119,71 @@ fn version_matches_the_cargo_package() {
         String::from_utf8_lossy(&output.stdout).trim(),
         concat!("ps5-pack-analyzer ", env!("CARGO_PKG_VERSION"))
     );
+}
+
+#[test]
+fn frostbite_cas_export_requires_opt_in_and_individual_savings() {
+    let fixture = Fixture::new();
+    let dump = fixture.0.join("dump");
+    let normal = fixture.0.join("normal");
+    let experiment = fixture.0.join("experiment");
+    let cas_dir = "Data/Ps5/superbundlelayout/test";
+    fs::create_dir_all(dump.join(cas_dir)).unwrap();
+    fs::write(dump.join("eboot.bin"), synthetic_elf(true)).unwrap();
+    let mut toc = vec![0; 4096];
+    toc[..8].copy_from_slice(b"\x00\xd1\xce\x01\x00\x00\x00\x00");
+    fs::write(dump.join("Data/layout.toc"), toc).unwrap();
+    fs::write(dump.join(cas_dir).join("cas_01.cas"), vec![0x42; 4096]).unwrap();
+    fs::write(dump.join("Data/cas_01.cas"), vec![0x42; 4096]).unwrap();
+    let mut state = 1u32;
+    let noise: Vec<_> = (0..4096)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        })
+        .collect();
+    fs::write(dump.join(cas_dir).join("cas_02.cas"), noise).unwrap();
+
+    successful(&run(&[&dump, &normal]));
+    assert!(!normal.join("profile.toml").exists());
+    let report = fs::read_to_string(normal.join("report.txt")).unwrap();
+    assert!(report.contains("Sampled 2 archives"));
+    assert!(report.contains("1 met the 8% savings threshold"));
+
+    let flag = Path::new("--frostbite-cas-candidates");
+    let invalid = run(&[&dump, &experiment, Path::new("--strict"), flag]);
+    assert!(!invalid.status.success());
+    assert!(!experiment.exists());
+
+    successful(&run(&[&dump, &experiment, flag]));
+    let selected = fs::read_to_string(experiment.join("selected.txt")).unwrap();
+    assert_eq!(selected, format!("{cas_dir}/cas_01.cas\n"));
+    let profile = fs::read_to_string(experiment.join("profile.toml")).unwrap();
+    assert!(profile.contains(&format!("\"{cas_dir}/cas_01.cas\"")));
+    assert!(profile.contains("Their runtime read paths are unverified."));
+    successful(&run(&[Path::new("--verify"), &dump, &experiment]));
+
+    let declined = fixture.0.join("declined");
+    let response = guided(&format!("{}\n{}\n\n", dump.display(), declined.display()));
+    successful(&response);
+    assert!(String::from_utf8_lossy(&response.stdout).contains("Include these archives"));
+    assert!(declined.join("report.txt").is_file());
+    assert!(!declined.join("profile.toml").exists());
+
+    let accepted = fixture.0.join("accepted");
+    let response = guided(&format!("{}\n{}\ny\n", dump.display(), accepted.display()));
+    successful(&response);
+    assert_eq!(
+        fs::read_to_string(accepted.join("selected.txt")).unwrap(),
+        selected
+    );
+    assert_eq!(
+        fs::read_to_string(accepted.join("profile.toml")).unwrap(),
+        profile
+    );
+    successful(&run(&[Path::new("--verify"), &dump, &accepted]));
 }
 
 #[test]

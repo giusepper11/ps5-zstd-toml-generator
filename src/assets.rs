@@ -1,6 +1,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AssetKind {
     Payload(PayloadKind),
+    FrostbiteCas,
     Control,
     Media,
     Unknown,
@@ -15,6 +16,26 @@ pub(crate) enum PayloadKind {
     Animation,
     Object,
     AudioBank,
+}
+
+pub(crate) fn frostbite_layout(header: &[u8], size: u64) -> bool {
+    size >= 0x22c && header.starts_with(b"\x00\xd1\xce\x01\x00\x00\x00\x00")
+}
+
+// CAS files can start with different kinds of blocks. Identify this layout
+// from its companion TOC and archive path instead of assuming one CAS magic.
+pub(crate) fn frostbite_cas_path(lower: &str) -> bool {
+    let Some(relative) = lower
+        .strip_prefix("data/ps5/superbundlelayout/")
+        .or_else(|| lower.strip_prefix("patch/ps5/superbundlelayout/"))
+    else {
+        return false;
+    };
+    relative
+        .rsplit_once('/')
+        .and_then(|(_, name)| name.strip_prefix("cas_"))
+        .and_then(|name| name.strip_suffix(".cas"))
+        .is_some_and(|number| !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Format evidence from a file header and its inventory size. Compatibility
@@ -50,6 +71,7 @@ pub(crate) fn classify(path: &str, size: u64, header: &[u8]) -> AssetKind {
                 | "texmeshman"
                 | "packman"
         )
+        || frostbite_layout(header, size)
         || control_magic(header)
     {
         return AssetKind::Control;

@@ -84,6 +84,37 @@ fn prompt(
     ))
 }
 
+pub(crate) fn confirm_frostbite(count: usize) -> io::Result<bool> {
+    let mut input = io::stdin().lock();
+    let mut output = io::stdout().lock();
+    writeln!(
+        output,
+        "\nFrostbite game archives with potential space savings: {count}."
+    )?;
+    writeln!(
+        output,
+        "Test gameplay on a PS5 before relying on compression for these archives."
+    )?;
+    loop {
+        let Some(answer) = prompt(
+            &mut input,
+            &mut output,
+            "Include these archives in the test profile? [y/N]",
+        )?
+        else {
+            return Ok(false);
+        };
+        match answer.to_ascii_lowercase().as_str() {
+            "y" | "yes" => return Ok(true),
+            "" | "n" | "no" => return Ok(false),
+            _ => writeln!(
+                output,
+                "Enter Y for yes or press Enter to keep the archives loose."
+            )?,
+        }
+    }
+}
+
 fn dump_root(path: &Path) -> io::Result<PathBuf> {
     let meta = fs::symlink_metadata(path)?;
     #[cfg(windows)]
@@ -140,7 +171,7 @@ fn display_path(path: &Path) -> String {
 pub(crate) fn print_summary(output: &Path, candidates: usize) {
     println!("\nAnalysis complete.");
     if candidates == 0 {
-        println!("No compression candidates were found in this dump.");
+        println!("No compression profile was generated.");
         println!(
             "Analysis report: {}",
             display_path(&output.join("report.txt"))
