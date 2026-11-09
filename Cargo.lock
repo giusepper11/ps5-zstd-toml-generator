@@ -19,7 +19,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
 name = "ps5-pack-analyzer"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "iced-x86",
  "roxmltree",
