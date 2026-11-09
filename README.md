@@ -2,15 +2,15 @@
 
 PS5 Zstd TOML Generator is a Rust library and command-line tool for generating AMPR Zstd packing profiles from extracted PS5 dumps. The `ps5-pack-analyzer` executable reads the dump locally and writes reports and TOML profiles for PS5 Dump Forge.
 
-**The default profile keeps every file loose.** The separate profile in `candidates/` proposes files for compression based on static evidence and, in full mode, sampled compression savings. Candidates depend on the input dump and require validation on a PS5.
+The CLI writes one experimental `profile.toml` when it finds compression candidates. It uses static evidence and, in full mode, sampled compression savings. If no candidates qualify, it writes analysis reports so you can see why. Validate any generated profile on a PS5.
 
 ## Windows x64 quick start
 
 1. Open [Releases](https://github.com/giusepper11/ps5-zstd-toml-generator/releases), select the prerelease, and download the `windows-x64` ZIP under **Assets**.
 2. Extract the entire ZIP and double-click `Start-Generator.cmd`. The portable version runs without Rust or Git.
-3. Paste the path to the extracted dump. Press Enter to accept the suggested output folder or enter a new one. The tool prints both profile paths when it finishes.
+3. Paste the path to the extracted dump. Press Enter to accept the suggested output folder or enter a new one. The tool prints the profile path when it finds candidates, or the report path when it finds none.
 
-If the summary lists candidates, open `candidates/profile.toml` under **Pack → Custom rules (TOML)** in Forge to test compression. Keep any `paths-*.txt` files next to the profile and validate the result on a PS5.
+Open the generated `profile.toml` under **Pack → Custom rules (TOML)** in Forge to test compression. Keep any `paths-*.txt` files next to the profile and validate the result on a PS5.
 
 Windows may display a reputation warning because the prerelease is unsigned. Compare the ZIP's SHA-256 with the `.sha256` file from the same prerelease. You can also run the executable directly from PowerShell.
 
@@ -33,14 +33,13 @@ The default `--full` mode inventories the dump, inspects headers and readable ex
 
 | Output | Contents |
 | --- | --- |
-| `profile.toml` | Conservative profile with `default_action = "loose"` |
-| `candidates/profile.toml` | Experimental profile with the suggested selection |
+| `profile.toml` | Experimental compression rules for the selected candidates. Other files stay loose |
 | `paths-*.txt` | Optional pattern lists. Keep them next to the profile that references them |
 | `selected.txt` | Paths selected by the profile in the same folder |
 | `certificate.txt` | Hashes for the inventory, profile, selection, and evidence ranges |
 | `report.txt` and `decisions.tsv` | Analysis coverage and the reason for each file decision |
 
-Use `--exploratory` to export the candidates to the main `profile.toml` as well. Forge applies the profile the next time it builds the pack. In the Forge CLI, pass the profile through `--pack-profile`. The analyzer caps its output at 256 MiB and requires an additional 1 GiB of free disk space on Windows.
+Forge applies the profile the next time it builds the pack. In the Forge CLI, pass the profile through `--pack-profile`. The analyzer caps its output at 256 MiB and requires an additional 1 GiB of free disk space on Windows.
 
 The selection model follows [PS5 Dump Forge 0.5.4](https://github.com/quer3q/ps5-dump-forge/blob/v0.5.4/docs/packing.md) and [ampr-emu-ng 0.3.2](https://github.com/quer3q/ampr-emu-ng/blob/v0.3.2/docs/zstd-format.md). Check your versions before applying a profile. Test the candidate pack on the console, including a cold boot, save loading, audio, languages, streaming, and any game transitions that matter for your version.
 
@@ -48,11 +47,10 @@ The selection model follows [PS5 Dump Forge 0.5.4](https://github.com/quer3q/ps5
 
 ```sh
 cargo run --release --locked -- --verify ./example-dump ./analysis-output
-cargo run --release --locked -- --verify ./example-dump ./analysis-output/candidates
 cargo run --release --locked -- --trace ./trace.tsv ./analysis-output/certificate.txt
 ```
 
-`--verify` checks the selection and profile against the inventory, then rereads recorded evidence ranges in blocks of up to 4 MiB. By default, the certificate covers the ranges read during analysis. Use `--full-hash` when generating the profile to cover every byte. That option takes longer for larger dumps. The certificate checks integrity. It offers no origin authentication or atomic snapshot guarantee. Generating a certificate requires at least one nonempty evidence range.
+`--verify` checks the selection and profile against the inventory, then rereads recorded evidence ranges in blocks of up to 4 MiB. Point it at the directory containing `profile.toml`, including the `candidates/` folder in older outputs. By default, the certificate covers the ranges read during analysis. Use `--full-hash` when generating a profile to cover every byte. That option takes longer for larger dumps. The certificate checks integrity. It offers no origin authentication or atomic snapshot guarantee. Generating a certificate requires at least one nonempty evidence range.
 
 `--trace` reads a file from an external recorder and checks the hash of the certificate text. The [TSV schema](trace-schema.md) describes how to record observations. The report covers the scenarios tested and the identity reported by the recorder.
 

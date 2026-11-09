@@ -139,18 +139,20 @@ fn display_path(path: &Path) -> String {
 
 pub(crate) fn print_summary(output: &Path, candidates: usize) {
     println!("\nAnalysis complete.");
-    println!(
-        "Conservative profile (all files loose): {}",
-        display_path(&output.join("profile.toml"))
-    );
-    println!(
-        "Experimental profile ({candidates} candidates): {}",
-        display_path(&output.join("candidates").join("profile.toml"))
-    );
     if candidates == 0 {
         println!("No compression candidates were found in this dump.");
+        println!(
+            "Analysis report: {}",
+            display_path(&output.join("report.txt"))
+        );
     } else {
-        println!("To test compression, open the experimental profile under Pack > Custom rules (TOML) in Forge.");
+        println!(
+            "Experimental profile ({candidates} candidates): {}",
+            display_path(&output.join("profile.toml"))
+        );
+        println!(
+            "Open this profile under Pack > Custom rules (TOML) in Forge to test compression."
+        );
         println!(
             "Keep any paths-*.txt files next to the profile and validate the result on a PS5."
         );
