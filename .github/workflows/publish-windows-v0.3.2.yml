@@ -1,0 +1,171 @@
+name: Publish Windows v0.3.2 prerelease
+
+on:
+  push:
+    branches: [release/v0.3.2]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-prerelease-v0.3.2
+
+jobs:
+  package:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: v0.3.2
+      RELEASE_COMMIT: 57f711cb872c9f64a1cafb7a931f1d572143c34a
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_COMMIT }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate tag and install Rust
+        shell: pwsh
+        run: |
+          $main = git rev-parse refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0 -or $main -cne $env:RELEASE_COMMIT) { throw 'The approved commit must still be the tip of main.' }
+          rustup toolchain install 1.85.1 --profile minimal --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $metadata = cargo +1.85.1 metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = ($metadata.packages | Where-Object name -CEQ 'ps5-pack-analyzer').version
+          if ($env:RELEASE_TAG -cne "v$version") { throw "The tag must match Cargo.toml (v$version)." }
+      - name: Test and build Windows x64
+        shell: pwsh
+        run: |
+          cargo +1.85.1 test --release --locked --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.85.1 build --release --locked --target x86_64-pc-windows-msvc
+      - name: Package and verify ZIP
+        shell: pwsh
+        run: |
+          $zip = ./scripts/package-windows.ps1 -Tag $env:RELEASE_TAG -Executable 'target/x86_64-pc-windows-msvc/release/ps5-pack-analyzer.exe' -OutputDirectory dist
+          $entries = [IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+              $expected = @('Start-Generator.cmd', 'README.txt', 'LICENSE', 'ps5-pack-analyzer.exe')
+              if (Compare-Object $expected @($entries.Entries.FullName) -CaseSensitive) {
+                  throw 'Unexpected ZIP contents.'
+              }
+          } finally {
+              $entries.Dispose()
+          }
+          $expectedChecksum = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + (Split-Path -Leaf $zip)
+          if ((Get-Content -Raw -LiteralPath "$zip.sha256").TrimEnd() -cne $expectedChecksum) {
+              throw 'ZIP checksum mismatch.'
+          }
+          Expand-Archive -LiteralPath $zip -DestinationPath 'dist/smoke-test'
+          $version = & 'dist/smoke-test/ps5-pack-analyzer.exe' --version
+          if ($LASTEXITCODE -ne 0 -or $version -cne "ps5-pack-analyzer $($env:RELEASE_TAG.Substring(1))") {
+              throw 'The executable extracted from the ZIP failed its version check.'
+          }
+      - name: Create tag and draft prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tagRef = "refs/tags/$env:RELEASE_TAG"
+          $remoteTag = git ls-remote origin $tagRef
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($remoteTag) {
+              if (($remoteTag -split '\s+')[0] -cne $env:RELEASE_COMMIT) {
+                  throw 'The release tag already points to a different commit.'
+              }
+          } else {
+              gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f "ref=$tagRef" -f "sha=$env:RELEASE_COMMIT" --jq '.object.sha'
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $zip = 'dist/ps5-zstd-toml-generator-{0}-windows-x64.zip' -f $env:RELEASE_TAG
+          $notes = @'
+          Download and extract the entire ZIP. Double-click `Start-Generator.cmd` and enter the path to your extracted dump. The portable executable runs without Rust or Git.
+
+          The wizard offers to include Frostbite CAS archives when their samples show potential space savings. Enter Y to include them in a test profile, or press Enter to keep them loose. Scripts can opt in with `--frostbite-cas-candidates`.
+
+          Open the generated `profile.toml` in PS5 Dump Forge and validate gameplay on a PS5. `--verify` also accepts certificates created by v0.3.0 and v0.3.1.
+
+          Windows may display a reputation warning because the executable is unsigned. Compare the ZIP's SHA-256 with the `.sha256` file from this prerelease.
+          '@
+          $notesFile = Join-Path $env:RUNNER_TEMP 'ps5-release-notes.md'
+          Set-Content -LiteralPath $notesFile -Value $notes -Encoding utf8
+          gh release create $env:RELEASE_TAG $zip "$zip.sha256" --repo $env:GITHUB_REPOSITORY --verify-tag --draft --prerelease --title "PS5 Zstd TOML Generator $env:RELEASE_TAG" --notes-file $notesFile
+      - name: Download and test the draft assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $drafts = @($releases | ConvertFrom-Json | Where-Object {
+              $_.draft -and $_.prerelease -and $_.tag_name -ceq $env:RELEASE_TAG
+          })
+          if ($drafts.Count -ne 1) { throw 'Expected exactly one draft prerelease.' }
+          $release = $drafts[0]
+          $name = 'ps5-zstd-toml-generator-{0}-windows-x64.zip' -f $env:RELEASE_TAG
+          if (Compare-Object @($name, "$name.sha256") @($release.assets.name) -CaseSensitive) {
+              throw 'Unexpected release assets.'
+          }
+          $scratch = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'release-download')
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/octet-stream' }
+          foreach ($asset in $release.assets) {
+              $uri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/assets/$($asset.id)"
+              Invoke-WebRequest -Uri $uri -Headers $headers -OutFile (Join-Path $scratch.FullName $asset.name)
+          }
+          $zip = Join-Path $scratch.FullName $name
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $localHash = (Get-FileHash -LiteralPath "dist/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -cne $localHash -or (Get-Content -Raw -LiteralPath "$zip.sha256").TrimEnd() -cne "$hash  $name") {
+              throw 'Downloaded ZIP checksum mismatch.'
+          }
+          $bin = Join-Path $scratch.FullName 'Portable Build'
+          Expand-Archive -LiteralPath $zip -DestinationPath $bin
+          $dump = Join-Path $scratch.FullName 'Café Demo'
+          $env:RELEASE_FIXTURE_RS = Join-Path $env:GITHUB_WORKSPACE 'tests/common/mod.rs'
+          $fixtureSource = Join-Path $scratch.FullName 'fixture.rs'
+          $fixtureExe = Join-Path $scratch.FullName 'fixture.exe'
+          @'
+          include!(env!("RELEASE_FIXTURE_RS"));
+
+          fn main() -> std::io::Result<()> {
+              let dump = std::path::PathBuf::from(std::env::args_os().nth(1).unwrap());
+              let cas = dump.join("Data/Ps5/superbundlelayout/test");
+              std::fs::create_dir_all(&cas)?;
+              std::fs::write(dump.join("eboot.bin"), synthetic_elf(true))?;
+              let mut toc = [0; 4096];
+              toc[..8].copy_from_slice(b"\x00\xd1\xce\x01\x00\x00\x00\x00");
+              std::fs::write(dump.join("Data/layout.toc"), toc)?;
+              std::fs::write(cas.join("cas_01.cas"), [0x42; 16_384])
+          }
+          '@ | Set-Content -LiteralPath $fixtureSource -Encoding utf8
+          rustc +1.85.1 --edition=2021 $fixtureSource -o $fixtureExe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $fixtureExe $dump
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
+          $OutputEncoding = [Text.UTF8Encoding]::new($false)
+          @($dump, '', 'y', '') | & (Join-Path $bin 'Start-Generator.cmd')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $output = "$dump-toml"
+          $profile = Get-Content -Raw -LiteralPath (Join-Path $output 'profile.toml')
+          $selected = Get-Content -Raw -LiteralPath (Join-Path $output 'selected.txt')
+          if (-not $profile.Contains('action = "compress"') -or $selected.TrimEnd() -cne 'Data/Ps5/superbundlelayout/test/cas_01.cas' -or (Test-Path -LiteralPath (Join-Path $output 'candidates'))) {
+              throw 'Expected one profile containing the synthetic Frostbite CAS candidate.'
+          }
+          $exe = Join-Path $bin 'ps5-pack-analyzer.exe'
+          & $exe --verify $dump $output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "Verified downloaded ZIP SHA-256: $hash"
+          "RELEASE_ID=$($release.id)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Publish the verified prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ($env:RELEASE_ID -notmatch '^[0-9]+$') { throw 'Missing verified release ID.' }
+          $tag = git ls-remote origin "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0 -or ($tag -split '\s+')[0] -cne $env:RELEASE_COMMIT) { throw 'Release tag moved.' }
+          gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" -F draft=false -F prerelease=true --jq '.html_url'
+          exit $LASTEXITCODE
