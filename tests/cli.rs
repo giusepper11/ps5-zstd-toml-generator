@@ -62,14 +62,14 @@ fn guided(input: &str) -> Output {
 #[test]
 fn guided_mode_accepts_quoted_paths_and_checks_destinations() {
     let fixture = Fixture::new();
-    let dump = fixture.0.join("Jogo de ação");
+    let dump = fixture.0.join("Café Demo");
     fs::create_dir(&dump).unwrap();
     fs::write(dump.join("eboot.bin"), b"synthetic fixture").unwrap();
 
     let cancelled = guided(&format!("\"{}\"\n", dump.display()));
     successful(&cancelled);
-    assert!(String::from_utf8_lossy(&cancelled.stdout).contains("Análise cancelada"));
-    let first = fixture.0.join("Jogo de ação-toml");
+    assert!(String::from_utf8_lossy(&cancelled.stdout).contains("Analysis canceled"));
+    let first = fixture.0.join("Café Demo-toml");
     assert!(!first.exists());
 
     let output = guided(&format!(
@@ -80,16 +80,16 @@ fn guided_mode_accepts_quoted_paths_and_checks_destinations() {
     ));
     successful(&output);
     let summary = String::from_utf8(output.stdout).unwrap();
-    assert!(summary.contains("Pasta do dump inválida"));
+    assert!(summary.contains("Invalid dump folder"));
     assert!(summary.contains("output must be outside the dump"));
-    assert!(summary.contains("0 candidatos"));
+    assert!(summary.contains("0 candidates"));
     for (label, expected) in [
         (
-            "Perfil conservador (todos os arquivos soltos): ",
+            "Conservative profile (all files loose): ",
             first.join("profile.toml"),
         ),
         (
-            "Perfil experimental (0 candidatos): ",
+            "Experimental profile (0 candidates): ",
             first.join("candidates/profile.toml"),
         ),
     ] {
@@ -116,7 +116,7 @@ fn guided_mode_accepts_quoted_paths_and_checks_destinations() {
     let output = guided(&format!("{}\n{}\n\n", dump.display(), occupied.display()));
     successful(&output);
     assert!(String::from_utf8_lossy(&output.stdout).contains("output directory already exists"));
-    assert!(fixture.0.join("Jogo de ação-toml-2/profile.toml").is_file());
+    assert!(fixture.0.join("Café Demo-toml-2/profile.toml").is_file());
     assert_eq!(fs::read_dir(&occupied).unwrap().count(), 0);
 }
 

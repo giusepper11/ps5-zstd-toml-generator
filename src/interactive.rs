@@ -7,10 +7,13 @@ use super::{analyze_dump, check_output, path_exists, Options};
 pub(crate) fn run() -> io::Result<()> {
     let paths = choose_paths(&mut io::stdin().lock(), &mut io::stdout().lock())?;
     let Some((dump, output)) = paths else {
-        println!("Análise cancelada.");
+        println!("Analysis canceled.");
         return Ok(());
     };
-    println!("\nAnalisando o dump. Saída em {}", display_path(&output));
+    println!(
+        "\nAnalyzing the dump. Output folder: {}",
+        display_path(&output)
+    );
     analyze_dump(&dump, &output, Options::full(), false, true)
 }
 
@@ -20,29 +23,26 @@ fn choose_paths(
 ) -> io::Result<Option<(PathBuf, PathBuf)>> {
     writeln!(output, "PS5 Zstd TOML Generator\n")?;
     let (dump, root) = loop {
-        let Some(path) = prompt(input, output, "Caminho da pasta do dump extraído")? else {
+        let Some(path) = prompt(input, output, "Path to the extracted dump folder")? else {
             return Ok(None);
         };
         let dump = PathBuf::from(path);
         match dump_root(&dump) {
             Ok(root) => break (dump, root),
-            Err(error) => writeln!(output, "Pasta do dump inválida. {error}")?,
+            Err(error) => writeln!(output, "Invalid dump folder. {error}")?,
         }
     };
 
     let suggested = match suggest_output(&root) {
         Ok(suggested) => suggested,
         Err(error) => {
-            writeln!(output, "Escolha outra pasta para a saída. {error}")?;
+            writeln!(output, "Choose a different output folder. {error}")?;
             None
         }
     };
     let question = match &suggested {
-        Some(path) => format!(
-            "Pasta nova para a saída [Enter para {}]",
-            display_path(path)
-        ),
-        None => "Caminho de uma pasta nova fora do dump".into(),
+        Some(path) => format!("New output folder [press Enter for {}]", display_path(path)),
+        None => "Path to a new folder outside the dump".into(),
     };
     loop {
         let Some(path) = prompt(input, output, &question)? else {
@@ -50,7 +50,7 @@ fn choose_paths(
         };
         let destination = if path.is_empty() {
             let Some(path) = &suggested else {
-                writeln!(output, "Informe um caminho para a saída.")?;
+                writeln!(output, "Enter a path for the output folder.")?;
                 continue;
             };
             path.clone()
@@ -59,7 +59,7 @@ fn choose_paths(
         };
         match check_output(&root, &destination) {
             Ok(path) => return Ok(Some((dump, path))),
-            Err(error) => writeln!(output, "Pasta de saída inválida. {error}")?,
+            Err(error) => writeln!(output, "Invalid output folder. {error}")?,
         }
     }
 }
@@ -94,7 +94,7 @@ fn dump_root(path: &Path) -> io::Result<PathBuf> {
     #[cfg(not(windows))]
     let is_link = meta.file_type().is_symlink();
     if !meta.is_dir() || is_link {
-        return Err(super::argument("Informe o caminho de uma pasta real."));
+        return Err(super::argument("Choose a folder that is not a link."));
     }
     path.canonicalize()
 }
@@ -138,19 +138,21 @@ fn display_path(path: &Path) -> String {
 }
 
 pub(crate) fn print_summary(output: &Path, candidates: usize) {
-    println!("\nAnálise concluída.");
+    println!("\nAnalysis complete.");
     println!(
-        "Perfil conservador (todos os arquivos soltos): {}",
+        "Conservative profile (all files loose): {}",
         display_path(&output.join("profile.toml"))
     );
     println!(
-        "Perfil experimental ({candidates} candidatos): {}",
+        "Experimental profile ({candidates} candidates): {}",
         display_path(&output.join("candidates").join("profile.toml"))
     );
     if candidates == 0 {
-        println!("A análise não encontrou candidatos para compressão neste dump.");
+        println!("No compression candidates were found in this dump.");
     } else {
-        println!("Para testar compressão, abra o perfil experimental no Forge em Pack > Custom rules (TOML).");
-        println!("Mantenha as listas paths-*.txt ao lado do perfil e valide o resultado no PS5.");
+        println!("To test compression, open the experimental profile under Pack > Custom rules (TOML) in Forge.");
+        println!(
+            "Keep any paths-*.txt files next to the profile and validate the result on a PS5."
+        );
     }
 }

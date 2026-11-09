@@ -55,7 +55,7 @@ jobs:
           $zip = ./scripts/package-windows.ps1 -Tag $env:RELEASE_TAG -Executable 'target/x86_64-pc-windows-msvc/release/ps5-pack-analyzer.exe' -OutputDirectory dist
           $entries = [IO.Compression.ZipFile]::OpenRead($zip)
           try {
-              $expected = @('Abrir-gerador.cmd', 'LEIA-ME.txt', 'LICENSE', 'ps5-pack-analyzer.exe')
+              $expected = @('Start-Generator.cmd', 'README.txt', 'LICENSE', 'ps5-pack-analyzer.exe')
               if (Compare-Object $expected @($entries.Entries.FullName) -CaseSensitive) {
                   throw 'Unexpected ZIP contents.'
               }
@@ -78,11 +78,11 @@ jobs:
         run: |
           $zip = "dist/ps5-zstd-toml-generator-${env:RELEASE_TAG}-windows-x64.zip"
           $notes = @'
-          Baixe e extraia o ZIP inteiro. Abra `Abrir-gerador.cmd` com dois cliques e informe o caminho do dump extraído. O executável portátil funciona sem Rust ou Git.
+          Download and extract the entire ZIP. Double-click `Start-Generator.cmd` and enter the path to your extracted dump. The portable executable runs without Rust or Git.
 
-          O perfil principal mantém todos os arquivos soltos. Os candidatos à compressão precisam de validação no PS5.
+          The main profile keeps all files loose. Validate any compression candidates on a PS5.
 
-          O executável não tem assinatura de código. O Windows pode exibir um aviso de reputação. Compare o SHA-256 do ZIP com o arquivo `.sha256` desta pré-release.
+          Windows may display a reputation warning because the executable is unsigned. Compare the ZIP's SHA-256 with the `.sha256` file from this prerelease.
           '@
           $notesFile = Join-Path $env:RUNNER_TEMP 'ps5-release-notes.md'
           Set-Content -LiteralPath $notesFile -Value $notes -Encoding utf8

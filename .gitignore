@@ -28,6 +28,8 @@ rustc-ice-*.txt
 /Folder Dumps/
 /ZSTD/
 /TOML/
+/example-dump/
+/analysis-output*/
 /meu-dump/
 /saida*/
 *.pkg
