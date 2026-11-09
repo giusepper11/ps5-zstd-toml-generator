@@ -30,8 +30,8 @@ if ((Test-Path -LiteralPath $zip) -or (Test-Path -LiteralPath $checksum)) {
 
 $files = @(
     $exe.FullName
-    (Join-Path $PSScriptRoot 'windows/Abrir-gerador.cmd')
-    (Join-Path $PSScriptRoot 'windows/LEIA-ME.txt')
+    (Join-Path $PSScriptRoot 'windows/Start-Generator.cmd')
+    (Join-Path $PSScriptRoot 'windows/README.txt')
     (Join-Path $PSScriptRoot '../LICENSE')
 )
 Compress-Archive -LiteralPath $files -DestinationPath $zip

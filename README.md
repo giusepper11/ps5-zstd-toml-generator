@@ -1,69 +1,69 @@
 # PS5 Zstd TOML Generator
 
-Biblioteca Rust e CLI para gerar perfis TOML de empacotamento AMPR Zstd a partir de um dump de PS5 em formato de pasta. O executável se chama `ps5-pack-analyzer`. Ele lê o dump localmente, gera relatórios e perfis para o PS5 Dump Forge e deixa o empacotamento a cargo do Forge.
+PS5 Zstd TOML Generator is a Rust library and command-line tool for generating AMPR Zstd packing profiles from extracted PS5 dumps. The `ps5-pack-analyzer` executable reads the dump locally and writes reports and TOML profiles for PS5 Dump Forge.
 
-**O perfil padrão mantém todos os arquivos soltos.** O perfil em `candidates/` propõe arquivos para compressão com base em evidência estática e, no modo completo, em amostras de economia. A seleção depende do dump analisado e precisa de validação em console.
+**The default profile keeps every file loose.** The separate profile in `candidates/` proposes files for compression based on static evidence and, in full mode, sampled compression savings. Candidates depend on the input dump and require validation on a PS5.
 
-## Início rápido no Windows x64
+## Windows x64 quick start
 
-1. Abra [Releases](https://github.com/giusepper11/ps5-zstd-toml-generator/releases), selecione a pré-release e baixe o ZIP `windows-x64` da seção **Assets**.
-2. Extraia o ZIP inteiro e abra `Abrir-gerador.cmd` com dois cliques. A versão portátil roda sem Rust ou Git.
-3. Cole o caminho da pasta do dump extraído. Pressione Enter para usar a pasta de saída sugerida ou informe outra pasta nova. O assistente mostra os caminhos dos perfis ao terminar.
+1. Open [Releases](https://github.com/giusepper11/ps5-zstd-toml-generator/releases), select the prerelease, and download the `windows-x64` ZIP under **Assets**.
+2. Extract the entire ZIP and double-click `Start-Generator.cmd`. The portable version runs without Rust or Git.
+3. Paste the path to the extracted dump. Press Enter to accept the suggested output folder or enter a new one. The tool prints both profile paths when it finishes.
 
-`profile.toml` mantém todos os arquivos soltos. Se houver candidatos, abra `candidates/profile.toml` em **Pack → Custom rules (TOML)** no Forge para testar compressão. Mantenha as listas `paths-*.txt` ao lado do perfil e valide o resultado no PS5.
+If the summary lists candidates, open `candidates/profile.toml` under **Pack → Custom rules (TOML)** in Forge to test compression. Keep any `paths-*.txt` files next to the profile and validate the result on a PS5.
 
-A pré-release sai sem assinatura de código e o Windows pode exibir um aviso de reputação. Compare o SHA-256 do ZIP com o arquivo `.sha256` da mesma pré-release. No PowerShell, você também pode chamar o executável diretamente.
+Windows may display a reputation warning because the prerelease is unsigned. Compare the ZIP's SHA-256 with the `.sha256` file from the same prerelease. You can also run the executable directly from PowerShell.
 
 ```powershell
-.\ps5-pack-analyzer.exe 'D:\Meu Jogo' 'D:\Meu Jogo-toml'
-.\ps5-pack-analyzer.exe --verify 'D:\Meu Jogo' 'D:\Meu Jogo-toml'
+.\ps5-pack-analyzer.exe 'D:\My Game' 'D:\My Game-toml'
+.\ps5-pack-analyzer.exe --verify 'D:\My Game' 'D:\My Game-toml'
 ```
 
-## Compilar a partir do código-fonte
+## Build from source
 
-Requer Rust 1.85 ou posterior e um dump extraído em formato de pasta, com caminhos UTF-8. Os comandos abaixo usam caminhos de exemplo relativos à raiz do repositório. `saida` deve ser um diretório novo fora do dump, com diretório pai existente. Mantenha o dump estático durante a análise.
+Install Rust 1.85 or later and use an extracted dump with UTF-8 paths. The following examples run from the repository root. Choose a new output folder outside the dump with an existing parent folder. Keep the dump unchanged during analysis.
 
 ```sh
 git clone https://github.com/giusepper11/ps5-zstd-toml-generator.git
 cd ps5-zstd-toml-generator
-cargo run --release --locked -- ./meu-dump ./saida
+cargo run --release --locked -- ./example-dump ./analysis-output
 ```
 
-O modo padrão `--full` inventaria a árvore, examina cabeçalhos e executáveis legíveis e mede amostras de compressão das famílias candidatas. `--strict` restringe os candidatos aos argumentos aparentes do resolvedor APR. `--manifest-candidates` inclui hipóteses de catálogos. `--headers` amplia a inspeção de cabeçalhos em qualquer um desses dois modos. Rode com `--help` para ver a lista de opções.
+The default `--full` mode inventories the dump, inspects headers and readable executables, and measures compression savings for sample files from candidate families. `--strict` limits candidates to apparent APR resolver arguments. `--manifest-candidates` considers candidates identified in catalogs. `--headers` also scans file headers in either diagnostic mode. Run `--help` for all options.
 
-| Arquivo | Conteúdo |
+| Output | Contents |
 | --- | --- |
-| `profile.toml` | Perfil conservador com `default_action = "loose"` |
-| `candidates/profile.toml` | Perfil experimental com a seleção sugerida |
-| `paths-*.txt` | Listas opcionais de padrões. Mantenha-as ao lado do perfil que as referencia |
-| `selected.txt` | Caminhos selecionados no perfil da mesma pasta |
-| `certificate.txt` | Hashes do inventário, perfil, seleção e intervalos de evidência |
-| `report.txt` e `decisions.tsv` | Cobertura, decisões por arquivo e motivos |
+| `profile.toml` | Conservative profile with `default_action = "loose"` |
+| `candidates/profile.toml` | Experimental profile with the suggested selection |
+| `paths-*.txt` | Optional pattern lists. Keep them next to the profile that references them |
+| `selected.txt` | Paths selected by the profile in the same folder |
+| `certificate.txt` | Hashes for the inventory, profile, selection, and evidence ranges |
+| `report.txt` and `decisions.tsv` | Analysis coverage and the reason for each file decision |
 
-Use `--exploratory` para exportar os candidatos também em `profile.toml`. Para testar um perfil no Forge, use **Custom rules (TOML)** na aba **Pack** ou `--pack-profile` na CLI do Forge. Perfis são aplicados na próxima geração do pack. A saída do analisador tem limite de 256 MiB, e no Windows a CLI exige também 1 GiB de espaço livre de reserva.
+Use `--exploratory` to export the candidates to the main `profile.toml` as well. Forge applies the profile the next time it builds the pack. In the Forge CLI, pass the profile through `--pack-profile`. The analyzer caps its output at 256 MiB and requires an additional 1 GiB of free disk space on Windows.
 
-O modelo de seleção acompanha o [PS5 Dump Forge 0.5.4](https://github.com/quer3q/ps5-dump-forge/blob/v0.5.4/docs/packing.md) e o [ampr-emu-ng 0.3.2](https://github.com/quer3q/ampr-emu-ng/blob/v0.3.2/docs/zstd-format.md). Confirme as versões que você usa antes de aplicar o perfil. Para validar candidatos, exercite no console o boot a frio, carregamento de saves, áudio, idiomas, streaming e transições relevantes à versão do jogo.
+The selection model follows [PS5 Dump Forge 0.5.4](https://github.com/quer3q/ps5-dump-forge/blob/v0.5.4/docs/packing.md) and [ampr-emu-ng 0.3.2](https://github.com/quer3q/ampr-emu-ng/blob/v0.3.2/docs/zstd-format.md). Check your versions before applying a profile. Test the candidate pack on the console, including a cold boot, save loading, audio, languages, streaming, and any game transitions that matter for your version.
 
-## Verificar um resultado
+## Verify an analysis
 
 ```sh
-cargo run --release --locked -- --verify ./meu-dump ./saida
-cargo run --release --locked -- --verify ./meu-dump ./saida/candidates
-cargo run --release --locked -- --trace ./trace.tsv ./saida/certificate.txt
+cargo run --release --locked -- --verify ./example-dump ./analysis-output
+cargo run --release --locked -- --verify ./example-dump ./analysis-output/candidates
+cargo run --release --locked -- --trace ./trace.tsv ./analysis-output/certificate.txt
 ```
 
-`--verify` confere a seleção e o perfil contra o inventário e relê os intervalos registrados em blocos de até 4 MiB. Por padrão, o certificado cobre as faixas lidas durante a análise. Use `--full-hash` durante a geração para registrar todos os bytes, com custo proporcional ao tamanho do dump. O certificado é uma verificação de integridade, sem autenticação de origem ou garantia de snapshot atômico. A geração exige ao menos uma faixa de evidência não vazia.
+`--verify` checks the selection and profile against the inventory, then rereads recorded evidence ranges in blocks of up to 4 MiB. By default, the certificate covers the ranges read during analysis. Use `--full-hash` when generating the profile to cover every byte. That option takes longer for larger dumps. The certificate checks integrity. It offers no origin authentication or atomic snapshot guarantee. Generating a certificate requires at least one nonempty evidence range.
 
-`--trace` lê um arquivo gerado por um gravador externo e confere o hash do texto do certificado. O [formato TSV](trace-schema.md) descreve como registrar as observações. O relatório cobre os cenários exercitados e a identidade informada pelo gravador.
+`--trace` reads a file from an external recorder and checks the hash of the certificate text. The [TSV schema](trace-schema.md) describes how to record observations. The report covers the scenarios tested and the identity reported by the recorder.
 
-Os relatórios, listas, traces e certificados podem conter caminhos e metadados do dump. Use resultados sintéticos quando compartilhar um exemplo público.
+Reports, path lists, traces, and certificates can contain information about the dump. Use synthetic data in public examples.
 
-## Biblioteca e desenvolvimento
+## Library and development
 
-- `SourceTree` permite fornecer um inventário estável e leituras exatas por intervalo. `FolderSource` é o adaptador da CLI.
-- `analyze` e `analyze_with_progress` retornam `Analysis`, com acesso separado ao perfil principal e aos candidatos.
-- `forge::verify_generated` confere o subconjunto de TOML emitido pelo gerador. `forge::verify_with_selector` permite ao host conferir o perfil com o seletor real do Forge.
-- A [API de economia e o amostrador opcional para Node.js 24](ECONOMICS.md) descrevem a medição por blocos e seus limites.
+- `SourceTree` supplies a stable file inventory and supports exact range reads. The CLI uses the `FolderSource` adapter.
+- `analyze` and `analyze_with_progress` return an `Analysis` with separate access to the main profile and the candidates.
+- `forge::verify_generated` checks the subset of TOML emitted by the generator. With `forge::verify_with_selector`, a host can check the profile using Forge's own selector.
+- The [compression economics API and optional Node.js 24 sampler](ECONOMICS.md) document block sampling and its limits.
 
 ```sh
 cargo fmt --all -- --check
@@ -72,8 +72,10 @@ cargo test --locked
 node scripts/sample-zstd.mjs --self-test
 ```
 
-Os testes Rust criam entradas sintéticas e podem rodar sem arquivos de jogos. Para estimar economia, o gerador envia blocos brutos à API de compressão do `ruzstd`. O leitor de catálogos XML limita cada elemento a 128 atributos.
+The Rust tests create synthetic inputs. To estimate savings, the generator sends raw blocks to the `ruzstd` compression API. The XML catalog reader limits each element to 128 attributes.
 
-## Licença
+Write code, user-facing text, and documentation in English. See the [contributor guidelines](CONTRIBUTING.md).
+
+## License
 
 [MIT](LICENSE).
