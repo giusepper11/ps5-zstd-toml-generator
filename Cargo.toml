@@ -1,0 +1,14 @@
+[package]
+name = "ps5-pack-analyzer"
+version = "0.3.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Generate conservative and experimental AMPR Zstd TOML profiles from PS5 folder dumps"
+license = "MIT"
+repository = "https://github.com/giusepper11/ps5-zstd-toml-generator"
+publish = false
+
+[dependencies]
+iced-x86 = { version = "=1.21.0", default-features = false, features = ["std", "decoder", "instr_info"] }
+roxmltree = "=0.20.0"
+ruzstd = { version = "=0.8.1", default-features = false, features = ["std"] }
