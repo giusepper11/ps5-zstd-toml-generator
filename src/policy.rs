@@ -10,6 +10,7 @@ use crate::{source::invalid, Entry, Evidence, SourceTree};
 const MIN_FILE_BYTES: u64 = 2 * 1024;
 const SAMPLE_BYTES: u64 = 64 * 1024;
 const FILES_PER_FAMILY: usize = 16;
+const MAX_CAS_SAMPLES: usize = 256;
 const MIN_SAVINGS: u64 = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -17,6 +18,7 @@ pub(crate) enum Access {
     AprArgument,
     AprScope,
     Catalogue,
+    FrostbiteCas,
 }
 
 pub(crate) struct Findings<'a> {
@@ -29,6 +31,7 @@ pub(crate) struct Findings<'a> {
     pub apr_scopes: &'a BTreeSet<String>,
     pub keep: &'a BTreeSet<&'a str>,
     pub blocked_scopes: &'a BTreeSet<String>,
+    pub frostbite_cas_candidates: bool,
 }
 
 #[derive(Default)]
@@ -36,8 +39,19 @@ pub(crate) struct PolicyResult {
     pub selected: BTreeMap<String, Evidence>,
     pub selected_bytes: u64,
     families: Vec<Family>,
+    cas: CasSurvey,
     loose: BTreeMap<&'static str, (usize, u64)>,
     pub reasons: BTreeMap<String, &'static str>,
+}
+
+#[derive(Default)]
+struct CasSurvey {
+    files: usize,
+    bytes: u64,
+    samples: usize,
+    sampled_bytes: u64,
+    stored_bytes: u64,
+    favorable: usize,
 }
 
 struct Family {
@@ -64,7 +78,18 @@ pub(crate) fn select(
 ) -> io::Result<PolicyResult> {
     let mut result = PolicyResult::default();
     let mut groups = BTreeMap::<(Option<PayloadKind>, &str, String), Vec<Candidate<'_>>>::new();
+    let mut cas = Vec::new();
     for (entry, &kind) in files.iter().zip(kinds) {
+        if kind == AssetKind::FrostbiteCas {
+            result.cas.files += 1;
+            result.cas.bytes += entry.size;
+            if let Some(reason) = exclusion(entry, kind, &findings) {
+                result.leave(entry, reason);
+            } else {
+                cas.push(entry);
+            }
+            continue;
+        }
         let (asset, access) = match eligibility(entry, kind, &findings) {
             Ok(eligible) => eligible,
             Err(reason) => {
@@ -125,7 +150,54 @@ pub(crate) fn select(
         }
         result.families.push(family);
     }
+    cas.sort_unstable_by(|a, b| b.size.cmp(&a.size).then_with(|| a.path.cmp(&b.path)));
+    for (index, entry) in cas.into_iter().enumerate() {
+        if index >= MAX_CAS_SAMPLES {
+            result.leave(entry, "Frostbite CAS sampling limit reached");
+            continue;
+        }
+        let (raw, stored) = sample_file(tree, entry)?;
+        result.cas.samples += 1;
+        result.cas.sampled_bytes += raw;
+        result.cas.stored_bytes += stored;
+        if !saves_enough(raw, stored) {
+            result.leave(entry, "Frostbite CAS samples show little savings");
+            continue;
+        }
+        result.cas.favorable += 1;
+        if !findings.frostbite_cas_candidates {
+            result.leave(
+                entry,
+                "Frostbite CAS test export requires --frostbite-cas-candidates",
+            );
+        } else if !findings.apr || findings.incomplete {
+            result.leave(
+                entry,
+                "Frostbite CAS export requires APR and complete executable analysis",
+            );
+        } else {
+            result
+                .selected
+                .insert(entry.path.clone(), Evidence::Measured(Access::FrostbiteCas));
+            result.selected_bytes += entry.size;
+        }
+    }
     Ok(result)
+}
+
+fn exclusion(entry: &Entry, kind: AssetKind, facts: &Findings<'_>) -> Option<&'static str> {
+    let path = entry.path.as_str();
+    if facts.keep.contains(path)
+        || crate::protected_path(entry)
+        || under_any(path, facts.blocked_scopes)
+        || matches!(kind, AssetKind::Control | AssetKind::Media)
+    {
+        return Some("boot, control, executable, media or restricted I/O");
+    }
+    if entry.size < MIN_FILE_BYTES && kind != AssetKind::Payload(PayloadKind::SmbsMesh) {
+        return Some("small file");
+    }
+    None
 }
 
 fn eligibility(
@@ -133,17 +205,10 @@ fn eligibility(
     kind: AssetKind,
     facts: &Findings<'_>,
 ) -> Result<(Option<PayloadKind>, Access), &'static str> {
+    if let Some(reason) = exclusion(entry, kind, facts) {
+        return Err(reason);
+    }
     let path = entry.path.as_str();
-    if facts.keep.contains(path)
-        || crate::protected_path(entry)
-        || under_any(path, facts.blocked_scopes)
-        || matches!(kind, AssetKind::Control | AssetKind::Media)
-    {
-        return Err("boot, control, executable, media or restricted I/O");
-    }
-    if entry.size < MIN_FILE_BYTES && kind != AssetKind::Payload(PayloadKind::SmbsMesh) {
-        return Err("small file");
-    }
     if !facts.apr || facts.incomplete {
         return Err("missing APR or incomplete executable analysis");
     }
@@ -234,6 +299,19 @@ impl PolicyResult {
             let action = if f.compress { "compress" } else { "loose" };
             writeln!(out, "  .{} {:?}: {action}; {} files, {} raw bytes; {} sampled files, {}% sample savings.",
                 f.extension, f.kind, f.files, f.bytes, f.samples, percentage).unwrap();
+        }
+        let cas = &self.cas;
+        if cas.files > 0 {
+            writeln!(
+                out,
+                "Frostbite CAS: {} archives ({} raw bytes). Sampled {} archives (up to {MAX_CAS_SAMPLES}, largest first). {} met the {MIN_SAVINGS}% savings threshold.",
+                cas.files, cas.bytes, cas.samples, cas.favorable
+            )
+            .unwrap();
+            if cas.sampled_bytes > 0 {
+                let percentage = (cas.sampled_bytes - cas.stored_bytes) * 100 / cas.sampled_bytes;
+                writeln!(out, "  {percentage}% savings across sampled bytes. Runtime read paths are unverified. Use --frostbite-cas-candidates to export a profile for console testing.").unwrap();
+            }
         }
         for (reason, (files, bytes)) in &self.loose {
             writeln!(out, "Loose ({reason}): {files} files, {bytes} bytes.").unwrap();

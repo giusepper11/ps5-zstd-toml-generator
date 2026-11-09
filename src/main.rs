@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod interactive;
 
-const USAGE: &str = "ps5-pack-analyzer <dump-folder> <new-output-folder> [--full | --strict | --manifest-candidates] [--headers] [--full-hash]\n\
+const USAGE: &str = "ps5-pack-analyzer <dump-folder> <new-output-folder> [--full | --strict | --manifest-candidates] [--headers] [--full-hash] [--frostbite-cas-candidates]\n\
   ps5-pack-analyzer --verify <dump-folder> <analysis-folder>\n\
   ps5-pack-analyzer --trace <trace.tsv> <certificate.txt>\n\
   ps5-pack-analyzer --interactive\n\
@@ -24,6 +24,7 @@ const USAGE: &str = "ps5-pack-analyzer <dump-folder> <new-output-folder> [--full
   --manifest-candidates  Use the catalogue-only experimental policy from v0.1\n\
   --headers              Also scan all headers in either diagnostic mode\n\
   --full-hash            Cover every input byte in the profile certificate\n\
+  --frostbite-cas-candidates  Add sampled Frostbite CAS archives for console testing (full mode)\n\
   Writes one experimental profile when there are compression candidates. Validate it on a PS5.";
 
 fn main() -> ExitCode {
@@ -86,6 +87,7 @@ fn run() -> io::Result<()> {
     let mut mode = None;
     let mut scan_headers = false;
     let mut full_hash = false;
+    let mut frostbite_cas_candidates = false;
     for arg in args {
         if arg == "--exploratory" {
             // Older invocations used this flag to put candidates in the main profile.
@@ -97,6 +99,10 @@ fn run() -> io::Result<()> {
         }
         if arg == "--headers" {
             scan_headers = true;
+            continue;
+        }
+        if arg == "--frostbite-cas-candidates" {
+            frostbite_cas_candidates = true;
             continue;
         }
         let options = if arg == "--full" {
@@ -117,6 +123,7 @@ fn run() -> io::Result<()> {
     }
     let mut options = mode.unwrap_or_else(Options::full);
     options.scan_headers = scan_headers;
+    options.frostbite_cas_candidates = frostbite_cas_candidates;
     analyze_dump(&PathBuf::from(input), &output, options, full_hash, false)
 }
 
