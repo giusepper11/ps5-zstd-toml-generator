@@ -75,6 +75,7 @@ pub(crate) fn select(
     files: &[Entry],
     kinds: &[AssetKind],
     findings: Findings<'_>,
+    choose_frostbite_cas: impl FnOnce(usize) -> io::Result<bool>,
 ) -> io::Result<PolicyResult> {
     let mut result = PolicyResult::default();
     let mut groups = BTreeMap::<(Option<PayloadKind>, &str, String), Vec<Candidate<'_>>>::new();
@@ -151,6 +152,7 @@ pub(crate) fn select(
         result.families.push(family);
     }
     cas.sort_unstable_by(|a, b| b.size.cmp(&a.size).then_with(|| a.path.cmp(&b.path)));
+    let mut cas_candidates = Vec::new();
     for (index, entry) in cas.into_iter().enumerate() {
         if index >= MAX_CAS_SAMPLES {
             result.leave(entry, "Frostbite CAS sampling limit reached");
@@ -165,21 +167,25 @@ pub(crate) fn select(
             continue;
         }
         result.cas.favorable += 1;
-        if !findings.frostbite_cas_candidates {
-            result.leave(
-                entry,
-                "Frostbite CAS test export requires --frostbite-cas-candidates",
-            );
-        } else if !findings.apr || findings.incomplete {
+        if !findings.apr || findings.incomplete {
             result.leave(
                 entry,
                 "Frostbite CAS export requires APR and complete executable analysis",
             );
         } else {
+            cas_candidates.push(entry);
+        }
+    }
+    let include_cas = !cas_candidates.is_empty()
+        && (findings.frostbite_cas_candidates || choose_frostbite_cas(cas_candidates.len())?);
+    for entry in cas_candidates {
+        if include_cas {
             result
                 .selected
                 .insert(entry.path.clone(), Evidence::Measured(Access::FrostbiteCas));
             result.selected_bytes += entry.size;
+        } else {
+            result.leave(entry, "Frostbite CAS test export was not enabled");
         }
     }
     Ok(result)
@@ -310,7 +316,7 @@ impl PolicyResult {
             .unwrap();
             if cas.sampled_bytes > 0 {
                 let percentage = (cas.sampled_bytes - cas.stored_bytes) * 100 / cas.sampled_bytes;
-                writeln!(out, "  {percentage}% savings across sampled bytes. Runtime read paths are unverified. Use --frostbite-cas-candidates to export a profile for console testing.").unwrap();
+                writeln!(out, "  {percentage}% savings across sampled bytes. Runtime read paths are unverified. CAS export is optional in guided mode and uses --frostbite-cas-candidates on the command line.").unwrap();
             }
         }
         for (reason, (files, bytes)) in &self.loose {

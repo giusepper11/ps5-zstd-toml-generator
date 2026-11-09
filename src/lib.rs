@@ -121,7 +121,18 @@ pub fn analyze(tree: &mut (impl SourceTree + ?Sized), options: Options) -> io::R
 pub fn analyze_with_progress(
     tree: &mut (impl SourceTree + ?Sized),
     options: Options,
+    progress: impl FnMut(Progress),
+) -> io::Result<Analysis> {
+    analyze_with_frostbite_choice(tree, options, progress, |_| Ok(false))
+}
+
+/// Ask whether to include eligible Frostbite CAS archives after sampling.
+/// An explicit export option skips the callback.
+pub fn analyze_with_frostbite_choice(
+    tree: &mut (impl SourceTree + ?Sized),
+    options: Options,
     mut progress: impl FnMut(Progress),
+    choose_frostbite_cas: impl FnOnce(usize) -> io::Result<bool>,
 ) -> io::Result<Analysis> {
     if options.full && options.manifest_candidates {
         return Err(invalid(
@@ -392,6 +403,7 @@ pub fn analyze_with_progress(
                 blocked_scopes: &blocked_scopes,
                 frostbite_cas_candidates: options.frostbite_cas_candidates,
             },
+            choose_frostbite_cas,
         )?;
         selected = std::mem::take(&mut result.selected);
         selected_bytes = result.selected_bytes;

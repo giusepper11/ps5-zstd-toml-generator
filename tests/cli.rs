@@ -85,7 +85,8 @@ fn guided_mode_accepts_quoted_paths_and_checks_destinations() {
     let summary = String::from_utf8(output.stdout).unwrap();
     assert!(summary.contains("Invalid dump folder"));
     assert!(summary.contains("output must be outside the dump"));
-    assert!(summary.contains("No compression candidates were found"));
+    assert!(summary.contains("No compression profile was generated"));
+    assert!(!summary.contains("Include these archives"));
     let shown = Path::new(
         summary
             .lines()
@@ -163,6 +164,26 @@ fn frostbite_cas_export_requires_opt_in_and_individual_savings() {
     assert!(profile.contains(&format!("\"{cas_dir}/cas_01.cas\"")));
     assert!(profile.contains("Their runtime read paths are unverified."));
     successful(&run(&[Path::new("--verify"), &dump, &experiment]));
+
+    let declined = fixture.0.join("declined");
+    let response = guided(&format!("{}\n{}\n\n", dump.display(), declined.display()));
+    successful(&response);
+    assert!(String::from_utf8_lossy(&response.stdout).contains("Include these archives"));
+    assert!(declined.join("report.txt").is_file());
+    assert!(!declined.join("profile.toml").exists());
+
+    let accepted = fixture.0.join("accepted");
+    let response = guided(&format!("{}\n{}\ny\n", dump.display(), accepted.display()));
+    successful(&response);
+    assert_eq!(
+        fs::read_to_string(accepted.join("selected.txt")).unwrap(),
+        selected
+    );
+    assert_eq!(
+        fs::read_to_string(accepted.join("profile.toml")).unwrap(),
+        profile
+    );
+    successful(&run(&[Path::new("--verify"), &dump, &accepted]));
 }
 
 #[test]

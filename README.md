@@ -10,6 +10,8 @@ The CLI writes one experimental `profile.toml` when it finds compression candida
 2. Extract the entire ZIP and double-click `Start-Generator.cmd`. The portable version runs without Rust or Git.
 3. Paste the path to the extracted dump. Press Enter to accept the suggested output folder or enter a new one. The tool prints the profile path when it finds candidates, or the report path when it finds none.
 
+If the analysis finds Frostbite game archives worth testing, the wizard asks whether to include them in the profile. Enter Y to include them for a PS5 test, or press Enter to keep those archives loose.
+
 Open the generated `profile.toml` under **Pack → Custom rules (TOML)** in Forge to test compression. Keep any `paths-*.txt` files next to the profile and validate the result on a PS5.
 
 Windows may display a reputation warning because the prerelease is unsigned. Compare the ZIP's SHA-256 with the `.sha256` file from the same prerelease. You can also run the executable directly from PowerShell.

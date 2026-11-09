@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use ps5_pack_analyzer::{
-    analyze_with_progress,
+    analyze_with_frostbite_choice,
     audit::AuditedSource,
     certificate::{self, Certificate},
     FolderSource, Options, Profile, Progress,
@@ -168,15 +168,26 @@ fn analyze_dump(
     let mut source = AuditedSource::new(FolderSource::open(input)?);
     let mut next_update = 0;
     options.exploratory = true;
-    let result = analyze_with_progress(&mut source, options, |progress| match progress {
-        Progress::Headers { checked, total } if checked >= next_update || checked == total => {
-            eprintln!("Headers: {checked}/{total}");
-            next_update = checked + 16_384;
-        }
-        Progress::CodeAndCatalogues => eprintln!("Analyzing executable I/O and catalogues"),
-        Progress::CompressionSamples => eprintln!("Measuring Zstd savings on eligible families"),
-        _ => {}
-    })?;
+    let result = analyze_with_frostbite_choice(
+        &mut source,
+        options,
+        |progress| match progress {
+            Progress::Headers { checked, total } if checked >= next_update || checked == total => {
+                eprintln!("Headers: {checked}/{total}");
+                next_update = checked + 16_384;
+            }
+            Progress::CodeAndCatalogues => eprintln!("Analyzing executable I/O and catalogues"),
+            Progress::CompressionSamples => eprintln!("Measuring Zstd savings"),
+            _ => {}
+        },
+        |count| {
+            if guided {
+                interactive::confirm_frostbite(count)
+            } else {
+                Ok(false)
+            }
+        },
+    )?;
     let selected = result.selected_paths();
     let full_hash = full_hash && !selected.is_empty();
     if full_hash {

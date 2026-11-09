@@ -5,10 +5,13 @@ PS5 Zstd TOML Generator for Windows x64
 3. Paste the path to your extracted dump and press Enter. Accept the
    suggested output folder or enter a new folder outside the dump.
 
+If the wizard offers to include Frostbite game archives for testing,
+enter Y to include them or press Enter to keep them loose.
+
 If the summary lists candidates, open profile.toml under Pack > Custom
 rules (TOML) in PS5 Dump Forge to test compression. Keep any paths-*.txt
-files next to the profile and validate the result on a PS5. If there are
-no candidates, see report.txt for the analysis.
+files next to the profile and validate the result on a PS5. If the wizard
+only produces reports, see report.txt for the analysis.
 
 You can also run the executable from PowerShell.
   .\ps5-pack-analyzer.exe 'D:\My Game' 'D:\My Game-toml'
