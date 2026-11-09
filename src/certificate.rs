@@ -260,6 +260,7 @@ impl Certificate {
         }
         let analyzer = match l.next() {
             Some("analyzer=0.3.0") => "0.3.0",
+            Some("analyzer=0.3.1") => "0.3.1",
             Some(concat!("analyzer=", env!("CARGO_PKG_VERSION"))) => env!("CARGO_PKG_VERSION"),
             _ => return Err(invalid("unsupported analyzer version")),
         };

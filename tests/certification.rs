@@ -86,16 +86,18 @@ fn roundtrip_verifies_recorded_ranges_but_not_unsampled_bytes() {
 }
 
 #[test]
-fn verifies_certificates_from_version_0_3_0() {
+fn verifies_certificates_from_previous_releases() {
     let (mut dump, selected, profile, cert) = fixture();
-    let legacy = cert.serialize().replacen(
-        concat!("analyzer=", env!("CARGO_PKG_VERSION")),
-        "analyzer=0.3.0",
-        1,
-    );
-    let parsed = Certificate::parse(&legacy).unwrap();
-    parsed.verify(&mut dump, &selected, &profile).unwrap();
-    assert_eq!(parsed.serialize(), legacy);
+    for version in ["0.3.0", "0.3.1"] {
+        let legacy = cert.serialize().replacen(
+            concat!("analyzer=", env!("CARGO_PKG_VERSION")),
+            &format!("analyzer={version}"),
+            1,
+        );
+        let parsed = Certificate::parse(&legacy).unwrap();
+        parsed.verify(&mut dump, &selected, &profile).unwrap();
+        assert_eq!(parsed.serialize(), legacy);
+    }
 }
 
 #[test]
